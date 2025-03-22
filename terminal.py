@@ -37,6 +37,10 @@ def execute_command(command, timeout=30, require_confirmation=None, parent_widge
         # Return a placeholder message
         return f"COMMAND_PENDING:{command_id}:Command '{command}' requires user confirmation."
     
+    # Check if the command is a cd command
+    if command.strip().startswith("cd "):
+        return handle_cd_command(command)
+    
     # Check if the command needs sudo
     if command.strip().startswith("sudo "):
         return execute_sudo_command(command, timeout, parent_widget)
@@ -195,4 +199,18 @@ def cancel_command(command_id):
         PENDING_COMMANDS[command_id]["status"] = "canceled"
         return f"Command canceled by user."
     else:
-        return "Error: Command not found" 
+        return "Error: Command not found"
+
+def handle_cd_command(command):
+    """Handle the cd command by changing the current working directory"""
+    # Extract the target directory
+    target_dir = command.strip()[3:].strip()
+    
+    try:
+        # Change the directory
+        os.chdir(target_dir)
+        
+        # Return the new working directory
+        return f"Changed directory to: {os.getcwd()}"
+    except Exception as e:
+        return f"Error changing directory: {str(e)}" 

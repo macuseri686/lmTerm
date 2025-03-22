@@ -13,6 +13,53 @@ from command_row import CommandRow
 from terminal import execute_command
 from lmstudio_manager import LMStudioManager
 
+class ScrollableRow(Gtk.ListBoxRow):
+    """
+    A ListBoxRow that can scroll itself into view within its parent ListBox.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._scroll_handler_id_value = None
+
+    def scroll_to_bottom(self):
+        """Scroll this row to the bottom of the visible area"""
+        list_box = self.get_parent()
+        if not list_box:
+            return False
+            
+        # Get the parent of the list box - could be a Viewport or ScrolledWindow
+        parent = list_box.get_parent()
+        
+        # Find the ScrolledWindow - it might be the parent of the Viewport
+        scrolled_parent = None
+        if isinstance(parent, Gtk.ScrolledWindow):
+            scrolled_parent = parent
+        elif isinstance(parent, Gtk.Viewport):
+            viewport_parent = parent.get_parent()
+            if isinstance(viewport_parent, Gtk.ScrolledWindow):
+                scrolled_parent = viewport_parent
+        
+        if not scrolled_parent:
+            return False
+            
+        # Get the adjustment
+        vadj = scrolled_parent.get_vadjustment()
+        if not vadj:
+            return False
+            
+        # Print adjustment values for debugging
+        print(f"DEBUG: vadj values - value: {vadj.get_value()}, upper: {vadj.get_upper()}, page_size: {vadj.get_page_size()}")
+            
+        # Schedule the scroll to happen after the UI has updated
+        def do_scroll():
+            new_value = vadj.get_upper() - vadj.get_page_size()
+            print(f"DEBUG: Setting vadj value to {new_value}")
+            vadj.set_value(new_value)
+            return False  # Don't call again
+            
+        GLib.idle_add(do_scroll)
+        return True
+
 class LmTermWindow(Adw.ApplicationWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -131,15 +178,51 @@ class LmTermWindow(Adw.ApplicationWindow):
         self.entry_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.entry_container.set_hexpand(True)
         
+        # Create a box to position the prompt over the entry
+        entry_overlay_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        entry_overlay_box.set_hexpand(True)
+        
         self.command_entry = Gtk.Entry()
         self.command_entry.set_hexpand(True)
+        # self.command_entry.set_margin_start(80)  # Add left margin to make room for the prompt
         self.command_entry.set_placeholder_text("Enter command or AI prompt...")
         self.command_entry.connect("activate", self.on_command_submitted)
+        self.command_entry.add_css_class("command-input")  # Add CSS class
         
         # Set up key event controller for history navigation
         key_controller = Gtk.EventControllerKey.new()
         key_controller.connect("key-pressed", self.on_key_pressed)
         self.command_entry.add_controller(key_controller)
+        
+        # Add shell prompt indicator that will overlay the entry
+        self.prompt_frame = Gtk.Frame()
+        self.prompt_frame.add_css_class("shell-prompt")
+        self.prompt_frame.set_hexpand(False)
+        self.prompt_frame.set_halign(Gtk.Align.START)
+        self.prompt_frame.set_valign(Gtk.Align.CENTER)
+        
+        self.prompt_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.prompt_box.set_margin_start(4)
+        self.prompt_box.set_margin_end(4)
+        self.prompt_box.set_margin_top(4)
+        self.prompt_box.set_margin_bottom(4)
+        
+        # Get current directory for the prompt
+        current_dir = os.path.basename(os.getcwd())
+        self.prompt_label = Gtk.Label(label=f"{os.getenv('USER')}@{os.getenv('HOSTNAME', 'localhost')}:{current_dir}$")
+        self.prompt_label.add_css_class("monospace")
+        self.prompt_box.append(self.prompt_label)
+        
+        # Set the prompt box as the child of the frame
+        self.prompt_frame.set_child(self.prompt_box)
+        
+        # Position the prompt frame over the entry
+        entry_overlay = Gtk.Overlay()
+        entry_overlay.set_child(self.command_entry)
+        entry_overlay.add_overlay(self.prompt_frame)
+        
+        # Add the overlay to the entry container
+        self.entry_container.append(entry_overlay)
         
         # Create history popover
         self.history_popover = Gtk.Popover()
@@ -160,7 +243,6 @@ class LmTermWindow(Adw.ApplicationWindow):
         
         self.history_popover.set_child(history_scroll)
         
-        self.entry_container.append(self.command_entry)
         input_box.append(self.entry_container)
         
         run_button = Gtk.Button(label="Run")
@@ -193,7 +275,6 @@ class LmTermWindow(Adw.ApplicationWindow):
                     if len(self.command_history) > 100:
                         self.command_history = self.command_history[-100:]
         except Exception as e:
-            print(f"Error loading command history: {e}")
             self.command_history = []
     
     def save_command_history(self):
@@ -244,12 +325,17 @@ class LmTermWindow(Adw.ApplicationWindow):
             label.set_margin_top(5)
             label.set_margin_bottom(5)
             
-            row = Gtk.ListBoxRow()
+            row = ScrollableRow()
             row.set_child(label)
             self.history_list.append(row)
+        
+        # Add key controller to the history list
+        key_controller = Gtk.EventControllerKey.new()
+        key_controller.connect("key-pressed", self.on_history_key_pressed)
+        self.history_list.add_controller(key_controller)
     
     def on_key_pressed(self, controller, keyval, keycode, state):
-        """Handle key press events for history navigation"""
+        """Handle key press events for command entry navigation"""
         # Check for Up arrow key
         if keyval == Gdk.KEY_Up:
             # If popover is not visible, show it and populate
@@ -271,7 +357,7 @@ class LmTermWindow(Adw.ApplicationWindow):
                         self.history_list.select_row(row)
                         row.grab_focus()
                         # Scroll to the bottom to show the most recent item
-                        GLib.idle_add(lambda: self.history_list.scroll_to_row(row))
+                        row.scroll_to_bottom()
                         self.command_entry.set_text(self.command_history[-1])
             
             # Select the previous item in the history list (moving up)
@@ -301,10 +387,12 @@ class LmTermWindow(Adw.ApplicationWindow):
                         # Set the text in the entry
                         self.command_entry.set_text(self.command_history[self.history_index])
                 else:
-                    # Close the popover when we reach the bottom
-                    self.history_popover.popdown()
+                    # We're at the bottom item, clear the entry and close the popover
                     self.command_entry.set_text("")
+                    self.history_popover.popdown()
                     self.history_index = -1
+                    # Set focus back to the command entry
+                    self.command_entry.grab_focus()
                 
                 return True  # Stop event propagation
         
@@ -313,6 +401,69 @@ class LmTermWindow(Adw.ApplicationWindow):
             if self.history_popover.get_visible():
                 self.history_popover.popdown()
                 return True  # Stop event propagation
+        
+        # Check for Enter key to execute the selected command immediately
+        elif keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+            if self.history_popover.get_visible():
+                # Get the current text from the entry
+                command = self.command_entry.get_text()
+                if command:
+                    # Close the popover
+                    self.history_popover.popdown()
+                    # Execute the command
+                    self.on_command_submitted(None)
+                    return True  # Stop event propagation
+        
+        return False  # Continue event propagation
+    
+    def on_history_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key press events for history list navigation"""
+        # Check for Down arrow key
+        if keyval == Gdk.KEY_Down:
+            if self.history_index < len(self.command_history) - 1:
+                self.history_index += 1
+                row = self.history_list.get_row_at_index(self.history_index)
+                if row:
+                    self.history_list.select_row(row)
+                    row.grab_focus()
+                    self.command_entry.set_text(self.command_history[self.history_index])
+            else:
+                # We're at the bottom item, clear the entry and close the popover
+                self.command_entry.set_text("")
+                self.history_popover.popdown()
+                self.history_index = -1
+                self.command_entry.grab_focus()
+            
+            return True  # Stop event propagation
+        
+        # Check for Up arrow key
+        elif keyval == Gdk.KEY_Up:
+            if self.history_index > 0:
+                self.history_index -= 1
+                row = self.history_list.get_row_at_index(self.history_index)
+                if row:
+                    self.history_list.select_row(row)
+                    row.grab_focus()
+                    self.command_entry.set_text(self.command_history[self.history_index])
+            
+            return True  # Stop event propagation
+        
+        # Check for Enter key to execute the selected command immediately
+        elif keyval == Gdk.KEY_Return or keyval == Gdk.KEY_KP_Enter:
+            # Get the current text from the entry
+            command = self.command_entry.get_text()
+            if command:
+                # Close the popover
+                self.history_popover.popdown()
+                # Execute the command
+                self.on_command_submitted(None)
+            
+            return True  # Stop event propagation
+        
+        # Check for Escape key to close the popover
+        elif keyval == Gdk.KEY_Escape:
+            self.history_popover.popdown()
+            return True  # Stop event propagation
         
         return False  # Continue event propagation
     
@@ -326,6 +477,8 @@ class LmTermWindow(Adw.ApplicationWindow):
             self.history_popover.popdown()
             # Move cursor to the end of the text
             self.command_entry.set_position(-1)
+            # Execute the command immediately
+            self.on_command_submitted(None)
     
     def populate_model_dropdown(self):
         """Populate the model dropdown with available models"""
@@ -499,6 +652,10 @@ class LmTermWindow(Adw.ApplicationWindow):
         try:
             result = execute_command(command)
             GLib.idle_add(command_row.set_command_output, result)
+            
+            # Update the prompt if the command was a cd command
+            if command.strip().startswith("cd "):
+                GLib.idle_add(self.update_prompt)
         except Exception as e:
             GLib.idle_add(command_row.set_command_output, f"Error: {str(e)}")
 
@@ -549,3 +706,8 @@ class LmTermWindow(Adw.ApplicationWindow):
             vadj = scrolled.get_vadjustment()
             if vadj:
                 GLib.idle_add(lambda: vadj.set_value(vadj.get_upper() - vadj.get_page_size())) 
+
+    def update_prompt(self):
+        """Update the shell prompt with the current directory"""
+        current_dir = os.path.basename(os.getcwd())
+        self.prompt_label.set_text(f"{os.getenv('USER')}@{os.getenv('HOSTNAME', 'localhost')}:{current_dir}$") 

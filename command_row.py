@@ -1,5 +1,6 @@
 import gi
 import traceback
+import os
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -68,6 +69,7 @@ class CommandRow(Adw.ExpanderRow):
         self.output_label.add_css_class("monospace")
         
         self.output_scroll = Gtk.ScrolledWindow()
+        self.output_scroll.add_css_class("terminal-scrolled")
         self.output_scroll.set_min_content_height(100)
         self.output_scroll.set_max_content_height(400)
         self.output_scroll.set_child(self.output_label)
@@ -136,9 +138,17 @@ class CommandRow(Adw.ExpanderRow):
     def set_command(self, command):
         """Set the command to execute"""
         self._command_text = command
-        self.command_label.set_text(f"$ {command}")
+        self.command_label.set_text(command)
         self.command_box.set_visible(True)
         self.set_title(f"Command: {command}")
+        
+        # Debug print to check command box
+        print(f"DEBUG: Command box children: {[type(child) for child in self.command_box.observe_children()]}")
+        
+        # Remove any existing confirmation buttons first
+        for child in list(self.command_box.observe_children()):
+            if isinstance(child, Gtk.Box) and child != command_frame:
+                self.command_box.remove(child)
         
         # Don't automatically execute the command
         # Instead, add confirmation buttons
@@ -161,7 +171,7 @@ class CommandRow(Adw.ExpanderRow):
     def set_suggested_command(self, command):
         """Set a command suggested by the AI"""
         self._command_text = command
-        self.command_label.set_text(f"$ {command}")
+        self.command_label.set_text(command)
         self.command_box.set_visible(True)
         
         # Remove any existing confirmation buttons first
@@ -417,19 +427,8 @@ class CommandRow(Adw.ExpanderRow):
                                 # Update the output with the result
                                 GLib.idle_add(self._update_output, result)
                                 
-                                # If we're in an AI agent conversation, we need to send the result back to the AI
-                                if hasattr(self, 'pending_command_id'):
-                                    # Get the LMStudioManager instance from the window
-                                    if window and hasattr(window, 'lm_manager'):
-                                        # Send the tool result back to the AI
-                                        tool_id = self.pending_command_id
-                                        print(f"DEBUG - Sending tool result for ID: {tool_id}")
-                                        success = lm_manager.send_tool_result(tool_id, result)
-                                        if not success:
-                                            print("Failed to send tool result to AI")
-                                    
-                                    # Clear the pending command ID
-                                    self.pending_command_id = None
+                                # Process the next tool call if available
+                                GLib.idle_add(self._process_next_tool_call, result)
                                 
                                 # Remove the confirmation buttons after execution
                                 GLib.idle_add(self._remove_confirmation_buttons, parent)
@@ -441,31 +440,15 @@ class CommandRow(Adw.ExpanderRow):
                     # Display the command output immediately
                     GLib.idle_add(self._update_output, result)
                     
-                    # If we're in an AI agent conversation, we need to send the result back to the AI
-                    if hasattr(self, 'pending_command_id'):
-                        print(f"DEBUG - Pending command ID: {self.pending_command_id}")
-                        print(f"DEBUG - Command ID: {command_id}")
-                        
-                        # Get the LMStudioManager instance from the window
-                        window = self.get_root()
-                        if window and hasattr(window, 'lm_manager'):
-                            lm_manager = window.lm_manager
-                            
-                            # Send the tool result back to the AI
-                            tool_id = self.pending_command_id
-                            print(f"DEBUG - Sending tool result for ID: {tool_id}")
-                            success = lm_manager.send_tool_result(tool_id, result)
-                            if not success:
-                                print("Failed to send tool result to AI")
-                        else:
-                            print("Could not access LM Studio manager from window")
-                        
-                        # Clear the pending command ID
-                        self.pending_command_id = None
+                    # Process the next tool call if available
+                    GLib.idle_add(self._process_next_tool_call, result)
                 else:
                     from terminal import execute_command
                     result = execute_command(self._command_text, require_confirmation=False, parent_widget=self)  # Pass self as parent_widget
                     GLib.idle_add(self._update_output, result)
+                    
+                    # Process the next tool call if available
+                    GLib.idle_add(self._process_next_tool_call, result)
             except Exception as e:
                 GLib.idle_add(self._update_output, f"Error: {str(e)}")
                 import traceback
@@ -476,6 +459,41 @@ class CommandRow(Adw.ExpanderRow):
         
         import threading
         threading.Thread(target=run_in_thread).start()
+    
+    def _process_next_tool_call(self, previous_result):
+        """Process the next tool call in the queue"""
+        # Check if we have pending tool calls
+        if hasattr(self, '_pending_tool_calls') and self._pending_tool_calls:
+            # Remove the current tool call
+            self._pending_tool_calls.pop(0)
+            
+            # If we have more tool calls, process the next one
+            if self._pending_tool_calls:
+                next_call = self._pending_tool_calls[0]
+                self.set_suggested_command(next_call["command"])
+                self._command_id = next_call["id"]
+                self.pending_command_id = next_call["id"]
+                print(f"Processing next command: {next_call['command']} with ID: {next_call['id']}")
+                return
+        
+        # If we've processed all tool calls or there are none, send the result back to the AI
+        if hasattr(self, 'pending_command_id'):
+            # Get the LMStudioManager instance from the window
+            window = self.get_root()
+            if window and hasattr(window, 'lm_manager'):
+                lm_manager = window.lm_manager
+                
+                # Send the tool result back to the AI
+                tool_id = self.pending_command_id
+                print(f"DEBUG - Sending tool result for ID: {tool_id}")
+                success = lm_manager.send_tool_result(tool_id, previous_result)
+                if not success:
+                    print("Failed to send tool result to AI")
+            else:
+                print("Could not access LM Studio manager from window")
+            
+            # Clear the pending command ID
+            self.pending_command_id = None
     
     def _on_cancel_command(self, button):
         """Handle canceling a suggested command"""
@@ -512,6 +530,8 @@ class CommandRow(Adw.ExpanderRow):
     def _update_output(self, text):
         """Update the command output"""
         self.set_command_output(text)
+        
+        # No need to update prompt here anymore as it's handled in the window
     
     def _process_response(self, response):
         """Process the response to extract the actual text content"""
@@ -574,6 +594,46 @@ class CommandRow(Adw.ExpanderRow):
             # Return a message about the tool request
             return "I'm executing a command to help answer your question..."
         
+        # Handle JSON responses with tool_calls
+        try:
+            import json
+            if isinstance(response, str) and (response.startswith('{') or '"tool_calls"' in response):
+                parsed = json.loads(response)
+                
+                # Check if this is a tool call response
+                if 'tool_calls' in parsed:
+                    # This is a tool call, extract all tool calls
+                    tool_calls = parsed['tool_calls']
+                    if tool_calls and len(tool_calls) > 0:
+                        # Store all tool calls for sequential processing
+                        self._pending_tool_calls = []
+                        
+                        for tool_call in tool_calls:
+                            if tool_call['function']['name'] == 'terminal_execute':
+                                try:
+                                    arguments = json.loads(tool_call['function']['arguments'])
+                                    command = arguments.get('command', '')
+                                    if command:
+                                        self._pending_tool_calls.append({
+                                            "id": tool_call['id'],
+                                            "command": command
+                                        })
+                                except Exception as e:
+                                    print(f"Error parsing tool call arguments: {e}")
+                        
+                        # Process the first tool call
+                        if self._pending_tool_calls:
+                            first_call = self._pending_tool_calls[0]
+                            GLib.idle_add(self.set_suggested_command, first_call["command"])
+                            self._command_id = first_call["id"]
+                            self.pending_command_id = first_call["id"]
+                            
+                            # Return a message about the first command
+                            return f"I'll run the command: {first_call['command']}"
+        except Exception as e:
+            print(f"Error processing JSON response: {e}")
+            traceback.print_exc()
+        
         return processed_response
     
     def _process_tool_request(self, tool_content):
@@ -592,7 +652,39 @@ class CommandRow(Adw.ExpanderRow):
             # Parse the tool request
             tool_json = json.loads(tool_content.strip())
             
-            if tool_json.get("name") == "terminal_execute":
+            # Check if this is a single tool call or multiple tool calls
+            if isinstance(tool_json, dict) and "tool_calls" in tool_json:
+                # Multiple tool calls from the API response
+                tool_calls = tool_json["tool_calls"]
+                if tool_calls and len(tool_calls) > 0:
+                    # Store all tool calls for sequential processing
+                    self._pending_tool_calls = []
+                    
+                    # Add all tool calls to the queue
+                    for tool_call in tool_calls:
+                        if tool_call["function"]["name"] == "terminal_execute":
+                            try:
+                                arguments = json.loads(tool_call["function"]["arguments"])
+                                command = arguments.get("command", "")
+                                if command:
+                                    self._pending_tool_calls.append({
+                                        "id": tool_call["id"],
+                                        "command": command
+                                    })
+                            except Exception as e:
+                                print(f"Error parsing tool call arguments: {e}")
+                    
+                    # Process the first tool call
+                    if self._pending_tool_calls:
+                        first_call = self._pending_tool_calls[0]
+                        self.set_suggested_command(first_call["command"])
+                        self._command_id = first_call["id"]
+                        self.pending_command_id = first_call["id"]
+                        print(f"Set first command: {first_call['command']} with ID: {first_call['id']}")
+            
+            # Handle single tool call (legacy format)
+            elif isinstance(tool_json, dict) and tool_json.get("name") == "terminal_execute":
+                # Single tool call
                 command = tool_json.get("arguments", {}).get("command", "")
                 if command:
                     # Set the command in the UI

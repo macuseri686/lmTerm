@@ -1,12 +1,12 @@
 .user-bubble {
-    background-color: alpha(@accent_bg_color, 0.15);
+    background-color: #e3f2fd; /* Light blue for user bubbles */
     border-radius: 12px 12px 12px 0;
     margin-top: 8px;
     margin-bottom: 8px;
 }
 
 .ai-bubble {
-    background-color: alpha(@accent_bg_color, 0.07);
+    background-color: #f1f8e9; /* Light green for AI bubbles */
     border-radius: 12px 12px 0 12px;
     margin-top: 8px;
     margin-bottom: 8px;
@@ -34,6 +34,31 @@
     color: #abb2bf;
 } 
 
+.terminal-output > scrolledwindow.terminal-scrolled {
+    background-color: #282c34;
+}
+
+.terminal-scrolled {
+    background-color: #282c34;
+}
+
 .toolbar.vertical {
     background-color: rgba(250,250,250,0.8);
+}
+
+.shell-prompt {
+    background-color: rgba(255, 255, 255, 0.9);
+    border-radius: 3px;
+    font-size: 12px;
+    margin-left: 5px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    padding: 0;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    min-width: 80px;
+    z-index: 1;
+}
+.command-input {
+    padding-left: 225px;
 }

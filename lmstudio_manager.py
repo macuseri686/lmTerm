@@ -87,6 +87,9 @@ class LMStudioManager:
                 "max_tokens": -1
             }
             
+            # Debug: Print the full request payload
+            print(f"DEBUG - API Request: {json.dumps(payload, indent=2)}")
+            
             response = requests.post(
                 f"{LMSTUDIO_API_URL}/chat/completions", 
                 json=payload
@@ -94,7 +97,10 @@ class LMStudioManager:
             
             if response.status_code == 200:
                 result = response.json()
-                return result['choices'][0]['message']['content']
+                # Debug: Print the response (truncated for readability)
+                response_content = result['choices'][0]['message']['content']
+                print(f"DEBUG - API Response: {response_content[:100]}...")
+                return response_content
             else:
                 error_msg = f"Error: API returned status code {response.status_code}"
                 print(f"{error_msg}, response: {response.text}")
@@ -111,7 +117,7 @@ class LMStudioManager:
             if on_message:
                 on_message("Error: LM Studio not available or no model loaded")
             return "Error: LM Studio not available or no model loaded"
-            
+        
         try:
             # Try to import psutil for system specs, but handle case where it's not installed
             try:
@@ -123,7 +129,37 @@ class LMStudioManager:
                 cpu_cores = "Information not available"
             
             # Get system information
-            system_info = f"""
+            try:
+                # Try to get Ubuntu version specifically
+                ubuntu_version = "Unknown"
+                if platform.system() == "Linux":
+                    try:
+                        # Try to read from os-release file
+                        with open('/etc/os-release', 'r') as f:
+                            os_info = {}
+                            for line in f:
+                                if '=' in line:
+                                    key, value = line.rstrip().split('=', 1)
+                                    os_info[key] = value.strip('"')
+                        
+                        if 'VERSION_ID' in os_info and 'NAME' in os_info:
+                            ubuntu_version = f"{os_info['NAME']} {os_info['VERSION_ID']}"
+                        elif 'PRETTY_NAME' in os_info:
+                            ubuntu_version = os_info['PRETTY_NAME']
+                    except Exception as e:
+                        print(f"Error getting Ubuntu version: {e}")
+                
+                system_info = f"""
+System Information:
+- OS: {ubuntu_version} (Kernel: {platform.system()} {platform.release()})
+- Python: {platform.python_version()}
+- CPU: {platform.processor()} ({cpu_cores})
+- Memory: {memory_info}
+- Current Date/Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+            except Exception as e:
+                # Fallback to basic system info if there's an error
+                system_info = f"""
 System Information:
 - OS: {platform.system()} {platform.release()} ({platform.version()})
 - Python: {platform.python_version()}
@@ -131,6 +167,9 @@ System Information:
 - Memory: {memory_info}
 - Current Date/Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 """
+                print(f"Error getting detailed system info: {e}")
+
+            print(f"DEBUG - System info: {system_info}")
 
             # systtem prompt
             system_prompt = """
@@ -139,6 +178,19 @@ You can write message responses to the user, and you can execute commands using 
 You can also use markdown to format your responses. 
 
 Your role is to help the user with their high level tasks by executing commands and writing responses back to the user.
+
+DO NOT RUN A TOOL FOR THE FIRST MESSAGE IN THE CONVERSATION. Start the conversation by providing the user a short overview of the task and the commands you will be executing. Then after the user confirms, you will run the commands.
+
+DO NOT tell the user what commands to run. You MUST run the commands yourself using tool calls 1 by 1 and report back the output, then run the next command, until the task is complete.
+
+If you are executing a command that will require confirmation from the user, like Y/N, run the command with a flag like "-y" to automatically confirm.
+
+Always err on the side of caution. For instance, instead of running "mv /etc/apt/sources.list /etc/apt/sources.list.bak", run "cp /etc/apt/sources.list /etc/apt/sources.list.bak".
+
+DO NOT run interactive commands like "vim" or "nano".
+ONLY run commands that will output to the terminal and return a response, like "ls", "cat", "git status", etc. 
+
+Always run only one command at a time, and wait for the tool result to come back before running the next command.
 """
             
             # Create a system message with the system info
@@ -154,7 +206,7 @@ Your role is to help the user with their high level tasks by executing commands 
                     if msg.get("role") == "system":
                         has_system_message = True
                         # Update the system message with current info
-                        msg["content"] = system_info
+                        msg["content"] = system_prompt + " " + system_info
                         break
                 
                 if not has_system_message:
@@ -195,8 +247,12 @@ Your role is to help the user with their high level tasks by executing commands 
             payload = {
                 "model": self.current_model,
                 "messages": self.current_chat,
-                "tools": api_tools
+                "tools": api_tools,
+                "tool_choice": "auto"
             }
+            
+            # Debug: Print the full request payload
+            print(f"DEBUG - Agent API Request: {json.dumps(payload, indent=2)}")
             
             response = requests.post(
                 f"{LMSTUDIO_API_URL}/chat/completions", 
@@ -205,11 +261,14 @@ Your role is to help the user with their high level tasks by executing commands 
             
             if response.status_code != 200:
                 error_msg = f"Error: API returned status code {response.status_code}"
+                print(f"DEBUG - API Error Response: {response.text}")
                 if on_message:
                     on_message(error_msg)
                 return error_msg
             
             result = response.json()
+            # Debug: Print the response
+            print(f"DEBUG - Agent API Response: {json.dumps(result, indent=2)}")
             
             # Check if the response includes tool calls
             assistant_message = result['choices'][0]['message']
@@ -285,54 +344,38 @@ Your role is to help the user with their high level tasks by executing commands 
                     "tool_call_id": tool_id
                 })
                 
-                # Find the window and command row to update the UI
-                from gi.repository import GLib, Gtk
-                from command_row import CommandRow
-                
-                def start_response_ui():
-                    # Find all windows
-                    windows = Gtk.Window.list_toplevels()
-                    print(f"Found {len(windows)} top-level windows")
-                    
-                    for window in windows:
-                        # Check if it's our application window
-                        if hasattr(window, 'command_rows'):
-                            # Find the most recent command row
-                            if window.command_rows:
-                                latest_row = window.command_rows[-1]
-                                print(f"Found latest command row: {latest_row}")
-                                
-                                # Start a new AI response with spinner
-                                new_box, new_label = latest_row.start_new_ai_response()
-                                
-                                # Store the row for later updates
-                                self._current_command_row = latest_row
-                                
-                                # Force the window to redraw
-                                window.queue_draw()
-                                
-                                # Ensure the expander is expanded to show the new content
-                                latest_row.set_expanded(True)
-                                
-                                break
-                
-                # Start the UI response with a spinner
-                GLib.idle_add(start_response_ui)
-                
-                # Make the API request to continue the conversation with streaming
+                # Make a new API request to get the next response
                 payload = {
                     "model": self.current_model,
                     "messages": self.current_chat,
-                    "stream": True  # Enable streaming
+                    "tools": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "terminal_execute",
+                                "description": "Execute a terminal command and return the output.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "command": {
+                                            "type": "string",
+                                            "description": "The command to execute"
+                                        }
+                                    },
+                                    "required": ["command"]
+                                }
+                            }
+                        }
+                    ],
+                    "tool_choice": "auto"
                 }
                 
-                print(f"Sending tool result for model: {self.current_model}")
+                # Debug: Print the request payload
+                print(f"DEBUG - Tool Result API Request: {json.dumps(payload, indent=2)}")
                 
-                # Start a streaming request
                 response = requests.post(
                     f"{LMSTUDIO_API_URL}/chat/completions", 
-                    json=payload,
-                    stream=True  # Enable streaming in the request
+                    json=payload
                 )
                 
                 if response.status_code != 200:
@@ -340,62 +383,135 @@ Your role is to help the user with their high level tasks by executing commands 
                     print(f"Response: {response.text}")
                     return False
                 
-                # Process the streaming response
-                accumulated_content = ""
+                result = response.json()
+                # Debug: Print the response
+                print(f"DEBUG - Tool Result API Response: {json.dumps(result, indent=2)}")
                 
-                # Start a thread to process the streaming response
-                def process_stream():
-                    nonlocal accumulated_content
+                # Process the response
+                assistant_message = result['choices'][0]['message']
+                
+                # Check if the response includes tool calls
+                if 'tool_calls' in assistant_message:
+                    # Store the tool calls for later execution
+                    tool_calls = assistant_message['tool_calls']
+                    for tool_call in tool_calls:
+                        new_tool_id = tool_call['id']
+                        function_name = tool_call['function']['name']
+                        arguments = json.loads(tool_call['function']['arguments'])
+                        
+                        # Store the pending tool call
+                        self.pending_tool_calls[new_tool_id] = {
+                            "command": arguments.get('command', ''),
+                            "status": "pending",
+                            "id": new_tool_id,
+                            "function_name": function_name
+                        }
                     
-                    try:
-                        for line in response.iter_lines():
-                            if line:
-                                # Remove the "data: " prefix
-                                if line.startswith(b'data: '):
-                                    line = line[6:]
+                    # Add the assistant message to the conversation
+                    self.current_chat.append({
+                        "role": "assistant",
+                        "tool_calls": tool_calls
+                    })
+                    
+                    # Find the window to create a new command row
+                    from gi.repository import GLib, Gtk
+                    
+                    def create_new_command_row():
+                        # Find all windows
+                        windows = Gtk.Window.list_toplevels()
+                        print(f"Found {len(windows)} top-level windows")
+                        
+                        for window in windows:
+                            # Check if it's our application window
+                            if hasattr(window, 'command_rows'):
+                                # Create a new command row
+                                from command_row import CommandRow
+                                new_row = CommandRow()
                                 
-                                # Skip "[DONE]" message
-                                if line == b'[DONE]':
-                                    continue
+                                # Check if the window has the correct container attribute
+                                if hasattr(window, 'command_container'):
+                                    window.command_container.append(new_row)
+                                    window.command_rows.append(new_row)
+                                    print(f"Added new row to command_container")
+                                else:
+                                    print("Error: Window has no command_container attribute")
+                                    return
                                 
-                                try:
-                                    # Parse the JSON chunk
-                                    chunk = json.loads(line)
-                                    
-                                    # Extract the content delta
-                                    if 'choices' in chunk and len(chunk['choices']) > 0:
-                                        delta = chunk['choices'][0].get('delta', {})
-                                        content_delta = delta.get('content', '')
-                                        
-                                        if content_delta:
-                                            # Accumulate the content
-                                            accumulated_content += content_delta
-                                            
-                                            # Update the UI with the new chunk
-                                            GLib.idle_add(self._update_streaming_ui, content_delta)
-                                except json.JSONDecodeError:
-                                    print(f"Error parsing JSON from chunk: {line}")
-                                    continue
+                                # Set the AI response first (if any content is provided)
+                                if 'content' in assistant_message and assistant_message['content']:
+                                    new_row.set_ai_response(assistant_message['content'])
+                                
+                                # Set the suggested command from the first tool call
+                                if tool_calls and len(tool_calls) > 0:
+                                    tool_call = tool_calls[0]
+                                    arguments = json.loads(tool_call['function']['arguments'])
+                                    command = arguments.get('command', '')
+                                    new_row.set_suggested_command(command)
+                                    new_row._command_id = tool_call['id']
+                                    new_row.pending_command_id = tool_call['id']
+                                
+                                # Force the window to redraw
+                                window.queue_draw()
+                                
+                                # Scroll to the bottom
+                                if hasattr(window, '_scroll_to_bottom'):
+                                    GLib.idle_add(window._scroll_to_bottom)
+                                
+                                break
+                    
+                    # Create a new command row for the next tool call
+                    GLib.idle_add(create_new_command_row)
+                    
+                    return True
+                else:
+                    # No tool calls, just a regular response
+                    content = assistant_message.get('content', '')
+                    
+                    # Add the assistant message to the conversation
+                    self.current_chat.append({
+                        "role": "assistant",
+                        "content": content
+                    })
+                    
+                    # Find the window to create a new response row
+                    from gi.repository import GLib, Gtk
+                    
+                    def create_new_response_row():
+                        # Find all windows
+                        windows = Gtk.Window.list_toplevels()
                         
-                        # Add the complete message to the conversation
-                        self.current_chat.append({
-                            "role": "assistant",
-                            "content": accumulated_content
-                        })
-                        
-                        # Finalize the UI
-                        GLib.idle_add(self._finish_streaming_ui)
-                        
-                    except Exception as e:
-                        print(f"Error processing stream: {e}")
-                        traceback.print_exc()
-                        GLib.idle_add(self._finish_streaming_ui)
-                
-                # Start the streaming thread
-                import threading
-                threading.Thread(target=process_stream).start()
-                
-                return True
+                        for window in windows:
+                            # Check if it's our application window
+                            if hasattr(window, 'command_rows'):
+                                # Create a new command row
+                                from command_row import CommandRow
+                                new_row = CommandRow()
+                                
+                                # Check if the window has the correct container attribute
+                                if hasattr(window, 'command_container'):
+                                    window.command_container.append(new_row)
+                                    window.command_rows.append(new_row)
+                                    print(f"Added new row to command_container")
+                                else:
+                                    print("Error: Window has no command_container attribute")
+                                    return
+                                
+                                # Set the AI response
+                                new_row.set_ai_response(content)
+                                
+                                # Force the window to redraw
+                                window.queue_draw()
+                                
+                                # Scroll to the bottom
+                                if hasattr(window, '_scroll_to_bottom'):
+                                    GLib.idle_add(window._scroll_to_bottom)
+                                
+                                break
+                    
+                    # Create a new response row
+                    GLib.idle_add(create_new_response_row)
+                    
+                    return True
             else:
                 print(f"Error: Tool ID {tool_id} not found in pending tool calls")
                 return False
