@@ -1,0 +1,39 @@
+.user-bubble {
+    background-color: alpha(@accent_bg_color, 0.15);
+    border-radius: 12px 12px 12px 0;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.ai-bubble {
+    background-color: alpha(@accent_bg_color, 0.07);
+    border-radius: 12px 12px 0 12px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.command-text {
+    padding: 8px;
+}
+
+.command-frame {
+    border-radius: 6px;
+    background-color: alpha(black, 0.04);
+}
+
+.terminal-output {
+    background-color: #282c34;
+    color: #abb2bf;
+    border-radius: 6px;
+    padding: 12px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+}
+
+.terminal-output label {
+    color: #abb2bf;
+} 
+
+.toolbar.vertical {
+    background-color: rgba(250,250,250,0.8);
+}

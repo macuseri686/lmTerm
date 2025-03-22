@@ -1,0 +1,551 @@
+import gi
+import lmstudio as lms
+import subprocess
+import threading
+import json
+import os
+
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+from gi.repository import Gtk, Adw, GLib, Pango, Gdk, Gio
+
+from command_row import CommandRow
+from terminal import execute_command
+from lmstudio_manager import LMStudioManager
+
+class LmTermWindow(Adw.ApplicationWindow):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.set_default_size(900, 700)
+        self.set_title("LM Term")
+        
+        # Initialize command history
+        self.command_history = []
+        self.history_index = -1
+        self.history_file = os.path.join(os.path.expanduser("~"), ".config", "lmterm", "history.json")
+        self.load_command_history()
+        
+        # Initialize LM Studio and available models
+        self.lm_manager = LMStudioManager()
+        self.available_models = self.lm_manager.available_models
+        
+        # Keep track of command rows
+        self.command_rows = []
+        
+        # Main layout
+        self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        
+        # Create menu for the header bar
+        menu = Gio.Menu.new()
+        menu.append("About", "app.about")
+
+        
+        # Create menu button
+        menu_button = Gtk.MenuButton()
+        menu_button.set_icon_name("open-menu-symbolic")
+        menu_button.set_menu_model(menu)
+        
+        # Get the header bar and add the menu button
+        # For AdwApplicationWindow, we need to use different methods
+        headerbar = Adw.HeaderBar()
+        
+        # Add new conversation button to the left side
+        new_conversation_button = Gtk.Button()
+        new_conversation_button.set_icon_name("document-new-symbolic")
+        new_conversation_button.set_tooltip_text("New Conversation")
+        new_conversation_button.connect("clicked", self.on_new_conversation)
+        headerbar.pack_start(new_conversation_button)
+        
+        headerbar.pack_end(menu_button)
+        self.main_box.append(headerbar)
+        
+        # Main content area with scrolling
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_vexpand(True)
+        self.main_box.append(scrolled)
+        
+        # Command history container (vertical box for accordion items)
+        self.command_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        scrolled.set_child(self.command_container)
+        
+        # Input area at the bottom
+        input_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        input_area.add_css_class("toolbar")
+        self.main_box.append(input_area)
+        
+        # Controls row (toggles and dropdown)
+        controls_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        controls_box.set_margin_start(12)
+        controls_box.set_margin_end(12)
+        controls_box.set_margin_top(6)
+        controls_box.set_margin_bottom(6)
+        input_area.append(controls_box)
+        
+        # AI/Direct toggle
+        self.mode_switch = Gtk.Switch()
+        self.mode_switch.set_active(True)  # Set AI mode as default
+        mode_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        mode_label = Gtk.Label(label="Command")
+        mode_box.append(mode_label)
+        mode_box.append(self.mode_switch)
+        ai_label = Gtk.Label(label="AI")
+        mode_box.append(ai_label)
+        controls_box.append(mode_box)
+        
+        # Human in loop toggle
+        self.human_switch = Gtk.Switch()
+        human_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        human_label = Gtk.Label(label="Human in Loop")
+        human_box.append(human_label)
+        human_box.append(self.human_switch)
+        agent_label = Gtk.Label(label="AI Agent")
+        human_box.append(agent_label)
+        controls_box.append(human_box)
+        # hide this for now
+        human_box.set_visible(False)
+        agent_label.set_visible(False)
+        
+        # Add a spacer to push the model selection to the right
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        controls_box.append(spacer)
+        
+        # Model selection dropdown
+        model_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        model_label = Gtk.Label(label="Model:")
+        model_box.append(model_label)
+        
+        self.model_dropdown = Gtk.DropDown()
+        model_box.append(self.model_dropdown)
+        controls_box.append(model_box)
+        self.populate_model_dropdown()
+        
+        # Command input
+        input_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        input_box.set_margin_start(12)
+        input_box.set_margin_end(12)
+        input_box.set_margin_top(6)
+        input_box.set_margin_bottom(12)
+        
+        # Create a box to contain the entry and the history popover
+        self.entry_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.entry_container.set_hexpand(True)
+        
+        self.command_entry = Gtk.Entry()
+        self.command_entry.set_hexpand(True)
+        self.command_entry.set_placeholder_text("Enter command or AI prompt...")
+        self.command_entry.connect("activate", self.on_command_submitted)
+        
+        # Set up key event controller for history navigation
+        key_controller = Gtk.EventControllerKey.new()
+        key_controller.connect("key-pressed", self.on_key_pressed)
+        self.command_entry.add_controller(key_controller)
+        
+        # Create history popover
+        self.history_popover = Gtk.Popover()
+        self.history_popover.set_position(Gtk.PositionType.TOP)
+        self.history_popover.set_parent(self.command_entry)
+        
+        # Create a scrolled window for the history list
+        history_scroll = Gtk.ScrolledWindow()
+        history_scroll.set_min_content_height(200)
+        history_scroll.set_max_content_height(400)
+        history_scroll.set_min_content_width(400)
+        
+        # Create a list box for history items
+        self.history_list = Gtk.ListBox()
+        self.history_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.history_list.connect("row-activated", self.on_history_item_activated)
+        history_scroll.set_child(self.history_list)
+        
+        self.history_popover.set_child(history_scroll)
+        
+        self.entry_container.append(self.command_entry)
+        input_box.append(self.entry_container)
+        
+        run_button = Gtk.Button(label="Run")
+        run_button.add_css_class("suggested-action")
+        run_button.connect("clicked", self.on_command_submitted)
+        input_box.append(run_button)
+        
+        input_area.append(input_box)
+        
+        # Set the main content
+        self.set_content(self.main_box)
+        
+        # Connect to the map event to set focus on the command entry when window is shown
+        self.connect("map", self.on_window_mapped)
+    
+    def on_window_mapped(self, widget):
+        """Set focus on the command entry when the window is mapped"""
+        self.command_entry.grab_focus()
+    
+    def load_command_history(self):
+        """Load command history from file"""
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+            
+            if os.path.exists(self.history_file):
+                with open(self.history_file, 'r') as f:
+                    self.command_history = json.load(f)
+                    # Limit history size to 100 items
+                    if len(self.command_history) > 100:
+                        self.command_history = self.command_history[-100:]
+        except Exception as e:
+            print(f"Error loading command history: {e}")
+            self.command_history = []
+    
+    def save_command_history(self):
+        """Save command history to file"""
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+            
+            with open(self.history_file, 'w') as f:
+                json.dump(self.command_history, f)
+        except Exception as e:
+            print(f"Error saving command history: {e}")
+    
+    def add_to_history(self, command):
+        """Add a command to history, avoiding duplicates"""
+        # Remove the command if it already exists to avoid duplicates
+        if command in self.command_history:
+            self.command_history.remove(command)
+        
+        # Add the command to the end of the list
+        self.command_history.append(command)
+        
+        # Limit history size to 100 items
+        if len(self.command_history) > 100:
+            self.command_history = self.command_history[-100:]
+        
+        # Save the updated history
+        self.save_command_history()
+    
+    def populate_history_list(self):
+        """Populate the history list with items"""
+        # Clear existing items
+        while True:
+            row = self.history_list.get_first_child()
+            if row is None:
+                break
+            self.history_list.remove(row)
+        
+        # Add history items in order (oldest first)
+        # This will make the most recent items appear at the bottom
+        for cmd in self.command_history:
+            label = Gtk.Label(label=cmd)
+            label.set_halign(Gtk.Align.START)
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            label.set_max_width_chars(60)
+            label.set_margin_start(5)
+            label.set_margin_end(5)
+            label.set_margin_top(5)
+            label.set_margin_bottom(5)
+            
+            row = Gtk.ListBoxRow()
+            row.set_child(label)
+            self.history_list.append(row)
+    
+    def on_key_pressed(self, controller, keyval, keycode, state):
+        """Handle key press events for history navigation"""
+        # Check for Up arrow key
+        if keyval == Gdk.KEY_Up:
+            # If popover is not visible, show it and populate
+            if not self.history_popover.get_visible():
+                self.populate_history_list()
+                
+                # Set the popover width to match the entry width
+                entry_width = self.command_entry.get_allocated_width()
+                self.history_popover.set_size_request(entry_width, -1)
+                
+                self.history_popover.popup()
+                
+                # Select the last (most recent) item in the history list
+                if len(self.command_history) > 0:
+                    last_index = len(self.command_history) - 1
+                    self.history_index = last_index
+                    row = self.history_list.get_row_at_index(last_index)
+                    if row:
+                        self.history_list.select_row(row)
+                        row.grab_focus()
+                        # Scroll to the bottom to show the most recent item
+                        GLib.idle_add(lambda: self.history_list.scroll_to_row(row))
+                        self.command_entry.set_text(self.command_history[-1])
+            
+            # Select the previous item in the history list (moving up)
+            elif self.history_index > 0:
+                self.history_index -= 1
+                row = self.history_list.get_row_at_index(self.history_index)
+                if row:
+                    self.history_list.select_row(row)
+                    # Scroll to the selected row
+                    row.grab_focus()
+                    # Set the text in the entry
+                    self.command_entry.set_text(self.command_history[self.history_index])
+            
+            return True  # Stop event propagation
+        
+        # Check for Down arrow key
+        elif keyval == Gdk.KEY_Down:
+            # If we're navigating history
+            if self.history_popover.get_visible():
+                if self.history_index < len(self.command_history) - 1:
+                    self.history_index += 1
+                    row = self.history_list.get_row_at_index(self.history_index)
+                    if row:
+                        self.history_list.select_row(row)
+                        # Scroll to the selected row
+                        row.grab_focus()
+                        # Set the text in the entry
+                        self.command_entry.set_text(self.command_history[self.history_index])
+                else:
+                    # Close the popover when we reach the bottom
+                    self.history_popover.popdown()
+                    self.command_entry.set_text("")
+                    self.history_index = -1
+                
+                return True  # Stop event propagation
+        
+        # Check for Escape key to close the popover
+        elif keyval == Gdk.KEY_Escape:
+            if self.history_popover.get_visible():
+                self.history_popover.popdown()
+                return True  # Stop event propagation
+        
+        return False  # Continue event propagation
+    
+    def on_history_item_activated(self, list_box, row):
+        """Handle history item selection"""
+        index = row.get_index()
+        if 0 <= index < len(self.command_history):
+            # Set the text in the entry
+            self.command_entry.set_text(self.command_history[index])
+            # Close the popover
+            self.history_popover.popdown()
+            # Move cursor to the end of the text
+            self.command_entry.set_position(-1)
+    
+    def populate_model_dropdown(self):
+        """Populate the model dropdown with available models"""
+        # Clear existing items
+        string_list = Gtk.StringList()
+        
+        # Add models from LM Studio
+        for model in self.lm_manager.available_models:
+            # Models from REST API are dictionaries, not objects
+            # Use the 'id' field instead of model_key
+            model_id = model.get('id', '')
+            if model_id:
+                string_list.append(model_id)
+        
+        # Set the dropdown model
+        self.model_dropdown.set_model(string_list)
+        self.model_dropdown.connect("notify::selected", self.on_model_changed)
+        
+        # Auto-select the first model if available
+        if len(self.lm_manager.available_models) > 0:
+            self.model_dropdown.set_selected(0)
+            self.on_model_changed(self.model_dropdown, None)
+    
+    def on_model_changed(self, dropdown, _):
+        """Handle model selection change"""
+        selected = dropdown.get_selected()
+        if hasattr(self, 'available_models') and self.available_models and selected < len(self.available_models):
+            success = self.lm_manager.set_model(selected)
+            if not success:
+                print(f"Failed to load model at index: {selected}")
+        else:
+            # Use the manager's available_models instead
+            if self.lm_manager.available_models and selected < len(self.lm_manager.available_models):
+                success = self.lm_manager.set_model(selected)
+                if success:
+                    print(f"Successfully loaded model at index: {selected}")
+                else:
+                    print(f"Failed to load model at index: {selected}")
+            else:
+                print(f"Invalid model index: {selected}")
+    
+    def on_command_submitted(self, widget):
+        """Handle command or prompt submission"""
+        text = self.command_entry.get_text()
+        if not text:
+            return
+            
+        # Add to history
+        self.add_to_history(text)
+        self.history_index = -1
+            
+        # Clear the entry
+        self.command_entry.set_text("")
+        
+        # Create a new command row
+        command_row = CommandRow()
+        self.command_container.append(command_row)
+        
+        # Add to command_rows list
+        self.command_rows.append(command_row)
+        print(f"Added new command row to command_rows list. Total rows: {len(self.command_rows)}")
+        
+        # Scroll to the bottom of the view
+        self._scroll_to_bottom()
+        
+        # Process based on mode
+        is_ai_mode = self.mode_switch.get_active()
+        is_agent_mode = not self.human_switch.get_active()
+        
+        if is_ai_mode:
+            # AI mode - send to LM Studio
+            command_row.set_user_prompt(text)
+            threading.Thread(target=self._process_ai_prompt, 
+                            args=(command_row, text, is_agent_mode)).start()
+        else:
+            # Direct command mode
+            command_row.set_command(text)
+            threading.Thread(target=self._execute_command, 
+                            args=(command_row, text)).start()
+    
+    def _process_ai_prompt(self, command_row, prompt, is_agent_mode):
+        """Process an AI prompt using LM Studio"""
+        try:
+            if not self.lm_manager.current_model:
+                GLib.idle_add(command_row.set_ai_response, 
+                             "Error: No model loaded. Please select a model.")
+                return
+                
+            if is_agent_mode:
+                # Define tools the AI can use
+                def terminal_execute(command: str) -> str:
+                    """Execute a terminal command and return the output."""
+                    return f"Command execution requires user confirmation: {command}"
+                
+                tools = [{
+                    "type": "function",
+                    "function": {
+                        "name": "terminal_execute",
+                        "description": "Execute a terminal command and return the output.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "command": {
+                                    "type": "string",
+                                    "description": "The command to execute"
+                                }
+                            },
+                            "required": ["command"]
+                        }
+                    }
+                }]
+                
+                def on_message(msg):
+                    # Process the message to extract any tool call requests
+                    try:
+                        parsed_msg = json.loads(msg)
+                        if 'tool_calls' in parsed_msg:
+                            for tool_call in parsed_msg['tool_calls']:
+                                if tool_call['function']['name'] == 'terminal_execute':
+                                    arguments = json.loads(tool_call['function']['arguments'])
+                                    command = arguments.get('command', '')
+                                    tool_id = tool_call['id']
+                                    
+                                    # Store the command ID in the command_row for later use
+                                    command_row.pending_command_id = tool_id
+                                    
+                                    # Set the suggested command in the UI
+                                    GLib.idle_add(command_row.set_suggested_command, command)
+                                    
+                                    # Store the command ID for later reference
+                                    GLib.idle_add(lambda: setattr(command_row, '_command_id', tool_id))
+                    except:
+                        # If we can't parse the message as JSON, just update the AI response
+                        pass
+                    
+                    # Update the AI response in the UI
+                    GLib.idle_add(command_row.update_ai_response, str(msg))
+                
+                # Run the AI agent
+                self.lm_manager.run_agent(
+                    prompt,
+                    tools,
+                    on_message=on_message
+                )
+                
+                # Final response is already handled by on_message callback
+            else:
+                # Human in loop mode - just get a response
+                result = self.lm_manager.get_response(prompt)
+                GLib.idle_add(command_row.set_ai_response, result)
+                
+                # If the AI suggested a command, extract it
+                # This is simplified and would need better parsing in a real app
+                if "```" in result:
+                    command_parts = result.split("```")
+                    for i, part in enumerate(command_parts):
+                        if i % 2 == 1 and not part.startswith("bash"):
+                            # Skip code blocks that aren't bash
+                            continue
+                        if i % 2 == 1:
+                            # Extract command from code block
+                            cmd = part.replace("bash\n", "").strip()
+                            GLib.idle_add(command_row.set_suggested_command, cmd)
+                            break
+                
+        except Exception as e:
+            GLib.idle_add(command_row.set_ai_response, f"Error: {str(e)}")
+    
+    def _execute_command(self, command_row, command):
+        """Execute a terminal command"""
+        try:
+            result = execute_command(command)
+            GLib.idle_add(command_row.set_command_output, result)
+        except Exception as e:
+            GLib.idle_add(command_row.set_command_output, f"Error: {str(e)}")
+
+    def on_new_conversation(self, button):
+        """Handle new conversation button click"""
+        # Clear all command rows from the container
+        while True:
+            child = self.command_container.get_first_child()
+            if child is None:
+                break
+            self.command_container.remove(child)
+        
+        # Clear the command_rows list
+        self.command_rows = []
+        
+        # Reset the command entry
+        self.command_entry.set_text("")
+        
+        # Focus the command entry
+        self.command_entry.grab_focus()
+
+    def add_command_row(self, prompt, is_agent_mode=False):
+        """Add a new command row to the chat"""
+        command_row = CommandRow()
+        command_row.set_user_prompt(prompt)
+        self.command_history.append(command_row)
+        
+        # Keep track of this command row
+        self.command_rows.append(command_row)
+        
+        # Process the prompt
+        threading.Thread(target=self._process_ai_prompt, 
+                        args=(command_row, prompt, is_agent_mode)).start()
+        
+        return command_row 
+
+    def _scroll_to_bottom(self):
+        """Scroll to the bottom of the conversation view"""
+        # Find the ScrolledWindow
+        scrolled = None
+        for child in self.main_box.observe_children():
+            if isinstance(child, Gtk.ScrolledWindow):
+                scrolled = child
+                break
+        
+        if scrolled:
+            # Get the adjustment and scroll to the bottom
+            vadj = scrolled.get_vadjustment()
+            if vadj:
+                GLib.idle_add(lambda: vadj.set_value(vadj.get_upper() - vadj.get_page_size())) 
