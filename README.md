@@ -1,6 +1,6 @@
 # lmTerm
 
-lmTerm is a GTK-based terminal application that integrates with LM Studio to provide AI-assisted command-line interactions.
+lmTerm is a GTK-based terminal application that integrates with LM Studio to provide completely local, private, and open source AI-assisted command-line interactions.
 
 ## Features
 
