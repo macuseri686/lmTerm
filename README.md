@@ -10,11 +10,9 @@ lmTerm is a GTK-based terminal application that integrates with LM Studio to pro
 - Integration with LM Studio's local LLM models
 - Tool execution with human-in-the-loop confirmation
 - Markdown formatting support for AI responses
-
-
-<video src="https://github.com/user-attachments/assets/d97feef5-2289-4129-a332-70ae4a6b436d" width="480"></video>
-![Screenshot from 2025-03-21 23-46-27](https://github.com/user-attachments/assets/006e0660-e45b-41c2-9525-a7030e37a1ad)
-![Screenshot from 2025-03-21 23-44-51](https://github.com/user-attachments/assets/367ac4ab-345b-4876-ab95-60bfcec1a457)
+  
+![Screenshot from 2025-03-22 18-14-26](https://github.com/user-attachments/assets/77cfd457-0d04-4095-a1ab-14d8e14fde3e)
+![Screenshot from 2025-03-22 18-13-24](https://github.com/user-attachments/assets/5b9e3d72-83e5-4eac-907a-7e6425d3c0dd)
 
 ## Requirements
 
