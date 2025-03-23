@@ -379,7 +379,7 @@ class CommandRow(Adw.ExpanderRow):
     
     def _on_run_command(self, button):
         """Handle running a suggested command"""
-        from terminal import confirm_command, PENDING_COMMANDS
+        from terminal import confirm_command, PENDING_COMMANDS, stream_command
         
         # Disable both buttons while running
         parent = button.get_parent()
@@ -405,12 +405,11 @@ class CommandRow(Adw.ExpanderRow):
                                 tool_info = lm_manager.pending_tool_calls[command_id]
                                 command = tool_info.get("command", "")
                                 
-                                # Add the command to PENDING_COMMANDS
-                                from terminal import execute_command
-                                result = execute_command(command, require_confirmation=False, parent_widget=self)  # Pass self as parent_widget
+                                # Import stream_command here to ensure it's available
+                                from terminal import stream_command
                                 
-                                # Update the output with the result
-                                GLib.idle_add(self._update_output, result)
+                                # Stream the command execution
+                                result = stream_command(command, parent_widget=self, command_row=self)
                                 
                                 # Update the prompt if the command was a cd command
                                 if command.strip().startswith("cd "):
@@ -426,10 +425,7 @@ class CommandRow(Adw.ExpanderRow):
                                 return
                 
                     # If we get here, try to confirm the command using the standard flow
-                    result = confirm_command(command_id, parent_widget=self)  # Pass self as parent_widget
-                    
-                    # Display the command output immediately
-                    GLib.idle_add(self._update_output, result)
+                    result = confirm_command(command_id, parent_widget=self, stream=True, command_row=self)
                     
                     # Update the prompt if the command was a cd command
                     command = PENDING_COMMANDS.get(command_id, {}).get("command", "")
@@ -441,9 +437,9 @@ class CommandRow(Adw.ExpanderRow):
                     # Process the next tool call if available
                     GLib.idle_add(self._process_next_tool_call, result)
                 else:
-                    from terminal import execute_command
-                    result = execute_command(self._command_text, require_confirmation=False, parent_widget=self)  # Pass self as parent_widget
-                    GLib.idle_add(self._update_output, result)
+                    # Import stream_command here to ensure it's available
+                    from terminal import stream_command
+                    result = stream_command(self._command_text, parent_widget=self, command_row=self)
                     
                     # Update the prompt if the command was a cd command
                     if self._command_text.strip().startswith("cd "):
@@ -612,16 +608,24 @@ class CommandRow(Adw.ExpanderRow):
                         # Store all tool calls for sequential processing
                         self._pending_tool_calls = []
                         
+                        # Track unique commands to avoid duplicates
+                        unique_commands = set()
+                        
                         for tool_call in tool_calls:
                             if tool_call['function']['name'] == 'terminal_execute':
                                 try:
                                     arguments = json.loads(tool_call['function']['arguments'])
                                     command = arguments.get('command', '')
                                     if command:
-                                        self._pending_tool_calls.append({
-                                            "id": tool_call['id'],
-                                            "command": command
-                                        })
+                                        # Only add this command if we haven't seen it before
+                                        if command not in unique_commands:
+                                            unique_commands.add(command)
+                                            self._pending_tool_calls.append({
+                                                "id": tool_call['id'],
+                                                "command": command
+                                            })
+                                        else:
+                                            print(f"Skipping duplicate command: {command}")
                                 except Exception as e:
                                     print(f"Error parsing tool call arguments: {e}")
                         
@@ -664,6 +668,9 @@ class CommandRow(Adw.ExpanderRow):
                     # Store all tool calls for sequential processing
                     self._pending_tool_calls = []
                     
+                    # Track unique commands to avoid duplicates
+                    unique_commands = set()
+                    
                     # Add all tool calls to the queue
                     for tool_call in tool_calls:
                         if tool_call["function"]["name"] == "terminal_execute":
@@ -671,10 +678,15 @@ class CommandRow(Adw.ExpanderRow):
                                 arguments = json.loads(tool_call["function"]["arguments"])
                                 command = arguments.get("command", "")
                                 if command:
-                                    self._pending_tool_calls.append({
-                                        "id": tool_call["id"],
-                                        "command": command
-                                    })
+                                    # Only add this command if we haven't seen it before
+                                    if command not in unique_commands:
+                                        unique_commands.add(command)
+                                        self._pending_tool_calls.append({
+                                            "id": tool_call["id"],
+                                            "command": command
+                                        })
+                                    else:
+                                        print(f"Skipping duplicate command: {command}")
                             except Exception as e:
                                 print(f"Error parsing tool call arguments: {e}")
                     
@@ -804,12 +816,42 @@ class CommandRow(Adw.ExpanderRow):
         """Update the AI response with a new chunk of text"""
         if not hasattr(self, '_current_response_text'):
             self._current_response_text = ""
+            self._thinking_processed = False  # Flag to track if we've already processed thinking tags
         
         # Append the new chunk to the current text
         self._current_response_text += chunk
         
         # Process the response to extract the actual content
-        processed_response = self._process_response(self._current_response_text)
+        # Only process thinking tags once
+        if not hasattr(self, '_thinking_processed') or not self._thinking_processed:
+            if "<think>" in self._current_response_text and "</think>" in self._current_response_text:
+                # Extract thinking content
+                thinking_start = self._current_response_text.find("<think>")
+                thinking_end = self._current_response_text.find("</think>") + len("</think>")
+                thinking_content = self._current_response_text[thinking_start + len("<think>"):thinking_end - len("</think>")].strip()
+                
+                # Store the thinking content for later use
+                self._thinking_content = thinking_content
+                
+                # Extract the actual response (after the thinking part)
+                processed_response = self._current_response_text[thinking_end:].strip()
+                
+                # If we already have an AI response label, add the thinking expander
+                if self.ai_response_label and self.ai_response_label.get_parent():
+                    self._add_thinking_expander(thinking_content)
+                
+                # Mark that we've processed thinking tags
+                self._thinking_processed = True
+            else:
+                # No complete thinking section yet, just use the current content
+                processed_response = self._current_response_text
+        else:
+            # We've already processed thinking tags, just update with content after the thinking section
+            thinking_end = self._current_response_text.find("</think>") + len("</think>")
+            if thinking_end > 0:
+                processed_response = self._current_response_text[thinking_end:].strip()
+            else:
+                processed_response = self._current_response_text
         
         # Update the label with the current text
         if self.ai_response_label:
@@ -830,6 +872,10 @@ class CommandRow(Adw.ExpanderRow):
             if parent:
                 parent.remove(self.ai_spinner)
             self.ai_spinner = None
+        
+        # Reset the thinking processed flag
+        if hasattr(self, '_thinking_processed'):
+            self._thinking_processed = False
 
     def start_new_ai_response(self):
         """Start a new AI response bubble with a spinner"""
@@ -994,4 +1040,4 @@ class CommandRow(Adw.ExpanderRow):
         # Reset the streaming flags
         self._streaming_content = ""
         if hasattr(self, '_thinking_expander_added'):
-            self._thinking_expander_added = False 
+            self._thinking_expander_added = False

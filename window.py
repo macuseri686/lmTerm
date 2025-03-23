@@ -10,7 +10,7 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, Adw, GLib, Pango, Gdk, Gio
 
 from command_row import CommandRow
-from terminal import execute_command
+from terminal import execute_command, stream_command
 from lmstudio_manager import LMStudioManager
 
 class ScrollableRow(Gtk.ListBoxRow):
@@ -574,6 +574,9 @@ class LmTermWindow(Adw.ApplicationWindow):
                              "Error: No model loaded. Please select a model.")
                 return
                 
+            # Initialize the AI response with a spinner
+            GLib.idle_add(command_row.start_ai_response)
+            
             if is_agent_mode:
                 # Define tools the AI can use
                 def terminal_execute(command: str) -> str:
@@ -598,12 +601,18 @@ class LmTermWindow(Adw.ApplicationWindow):
                     }
                 }]
                 
-                def on_message(msg):
-                    # Process the message to extract any tool call requests
+                # Define callbacks for streaming
+                def on_chunk(chunk):
+                    GLib.idle_add(command_row.update_streaming_response, chunk)
+                
+                def on_complete(final_response):
+                    GLib.idle_add(command_row.finish_streaming_response)
+                    
+                    # Process the final response to extract any tool call requests
                     try:
-                        parsed_msg = json.loads(msg)
-                        if 'tool_calls' in parsed_msg:
-                            for tool_call in parsed_msg['tool_calls']:
+                        parsed_response = json.loads(final_response)
+                        if 'tool_calls' in parsed_response:
+                            for tool_call in parsed_response['tool_calls']:
                                 if tool_call['function']['name'] == 'terminal_execute':
                                     arguments = json.loads(tool_call['function']['arguments'])
                                     command = arguments.get('command', '')
@@ -618,54 +627,74 @@ class LmTermWindow(Adw.ApplicationWindow):
                                     # Store the command ID for later reference
                                     GLib.idle_add(lambda: setattr(command_row, '_command_id', tool_id))
                     except:
-                        # If we can't parse the message as JSON, just update the AI response
+                        # If we can't parse the response as JSON, it's a regular text response
                         pass
-                    
-                    # Update the AI response in the UI
-                    GLib.idle_add(command_row.update_ai_response, str(msg))
                 
-                # Run the AI agent
-                self.lm_manager.run_agent(
+                # Run the AI agent with streaming
+                self.lm_manager.run_streaming_agent(
                     prompt,
                     tools,
-                    on_message=on_message
+                    on_chunk=on_chunk,
+                    on_complete=on_complete
                 )
-                
-                # Final response is already handled by on_message callback
             else:
-                # Human in loop mode - just get a response
-                result = self.lm_manager.get_response(prompt)
-                GLib.idle_add(command_row.set_ai_response, result)
+                # Human in loop mode - get a streaming response
+                def on_chunk(chunk):
+                    GLib.idle_add(command_row.update_streaming_response, chunk)
                 
-                # If the AI suggested a command, extract it
-                # This is simplified and would need better parsing in a real app
-                if "```" in result:
-                    command_parts = result.split("```")
-                    for i, part in enumerate(command_parts):
-                        if i % 2 == 1 and not part.startswith("bash"):
-                            # Skip code blocks that aren't bash
-                            continue
-                        if i % 2 == 1:
-                            # Extract command from code block
-                            cmd = part.replace("bash\n", "").strip()
-                            GLib.idle_add(command_row.set_suggested_command, cmd)
-                            break
+                def on_complete(final_response):
+                    GLib.idle_add(command_row.finish_streaming_response)
+                    
+                    # If the AI suggested a command, extract it
+                    if "```" in final_response:
+                        command_parts = final_response.split("```")
+                        for i, part in enumerate(command_parts):
+                            if i % 2 == 1 and not part.startswith("bash"):
+                                # Skip code blocks that aren't bash
+                                continue
+                            if i % 2 == 1:
+                                # Extract command from code block
+                                cmd = part.replace("bash\n", "").strip()
+                                GLib.idle_add(command_row.set_suggested_command, cmd)
+                                break
                 
+                # Get streaming response
+                self.lm_manager.get_streaming_response(
+                    prompt,
+                    on_chunk=on_chunk,
+                    on_complete=on_complete
+                )
+            
         except Exception as e:
             GLib.idle_add(command_row.set_ai_response, f"Error: {str(e)}")
     
     def _execute_command(self, command_row, command):
-        """Execute a terminal command"""
-        try:
-            # When in direct command mode, we should bypass confirmation
-            result = execute_command(command, require_confirmation=False)
-            GLib.idle_add(command_row.set_command_output, result)
-            
-            # Update the prompt if the command was a cd command
-            if command.strip().startswith("cd "):
-                GLib.idle_add(self.update_prompt)
-        except Exception as e:
-            GLib.idle_add(command_row.set_command_output, f"Error: {str(e)}")
+        """Execute a command and add it to the terminal output"""
+        # Create a new command row
+        command_row = CommandRow()
+        command_row.set_command(command)
+        
+        # Add the command row to the list
+        self.command_rows.append(command_row)
+        self.command_container.append(command_row)
+        print(f"Added new command row to command_rows list. Total rows: {len(self.command_rows)}")
+        
+        # Execute the command in a separate thread
+        def run_command():
+            try:
+                # Use stream_command instead of execute_command
+                result = stream_command(command, parent_widget=self, command_row=command_row)
+                
+                # Update the prompt if the command was a cd command
+                if command.strip().startswith("cd "):
+                    GLib.idle_add(self.update_prompt)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                GLib.idle_add(command_row.set_command_output, f"Error: {str(e)}")
+        
+        # Start the thread
+        threading.Thread(target=run_command).start()
 
     def on_new_conversation(self, button):
         """Handle new conversation button click"""
