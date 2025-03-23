@@ -3,6 +3,7 @@
     border-radius: 12px 12px 12px 0;
     margin-top: 8px;
     margin-bottom: 8px;
+    padding: 5px;
 }
 
 .ai-bubble {
@@ -10,6 +11,7 @@
     border-radius: 12px 12px 0 12px;
     margin-top: 8px;
     margin-bottom: 8px;
+    padding: 5px;
 }
 
 .command-text {
@@ -60,5 +62,5 @@
     z-index: 1;
 }
 .command-input {
-    padding-left: 225px;
+    /* padding-left: 225px; */
 }

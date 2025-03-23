@@ -150,23 +150,8 @@ class CommandRow(Adw.ExpanderRow):
             if isinstance(child, Gtk.Box) and child != command_frame:
                 self.command_box.remove(child)
         
-        # Don't automatically execute the command
-        # Instead, add confirmation buttons
-        confirmation_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        
-        # Add run button
-        run_button = Gtk.Button(label="Run")
-        run_button.add_css_class("suggested-action")
-        run_button.connect("clicked", self._on_run_command)
-        confirmation_box.append(run_button)
-        
-        # Add cancel button
-        cancel_button = Gtk.Button(label="Cancel")
-        cancel_button.connect("clicked", self._on_cancel_command)
-        confirmation_box.append(cancel_button)
-        
-        # Add the confirmation box to the command box
-        self.command_box.append(confirmation_box)
+        # Don't add confirmation buttons for direct commands
+        # The command will be executed immediately by the caller
     
     def set_suggested_command(self, command):
         """Set a command suggested by the AI"""
@@ -427,6 +412,12 @@ class CommandRow(Adw.ExpanderRow):
                                 # Update the output with the result
                                 GLib.idle_add(self._update_output, result)
                                 
+                                # Update the prompt if the command was a cd command
+                                if command.strip().startswith("cd "):
+                                    window = self.get_root()
+                                    if window and hasattr(window, 'update_prompt'):
+                                        GLib.idle_add(window.update_prompt)
+                                
                                 # Process the next tool call if available
                                 GLib.idle_add(self._process_next_tool_call, result)
                                 
@@ -440,12 +431,25 @@ class CommandRow(Adw.ExpanderRow):
                     # Display the command output immediately
                     GLib.idle_add(self._update_output, result)
                     
+                    # Update the prompt if the command was a cd command
+                    command = PENDING_COMMANDS.get(command_id, {}).get("command", "")
+                    if command and command.strip().startswith("cd "):
+                        window = self.get_root()
+                        if window and hasattr(window, 'update_prompt'):
+                            GLib.idle_add(window.update_prompt)
+                    
                     # Process the next tool call if available
                     GLib.idle_add(self._process_next_tool_call, result)
                 else:
                     from terminal import execute_command
                     result = execute_command(self._command_text, require_confirmation=False, parent_widget=self)  # Pass self as parent_widget
                     GLib.idle_add(self._update_output, result)
+                    
+                    # Update the prompt if the command was a cd command
+                    if self._command_text.strip().startswith("cd "):
+                        window = self.get_root()
+                        if window and hasattr(window, 'update_prompt'):
+                            GLib.idle_add(window.update_prompt)
                     
                     # Process the next tool call if available
                     GLib.idle_add(self._process_next_tool_call, result)

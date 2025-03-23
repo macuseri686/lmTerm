@@ -255,12 +255,19 @@ class LmTermWindow(Adw.ApplicationWindow):
         # Set the main content
         self.set_content(self.main_box)
         
+        # Update the prompt with colors
+        self.update_prompt()
+        
         # Connect to the map event to set focus on the command entry when window is shown
         self.connect("map", self.on_window_mapped)
     
     def on_window_mapped(self, widget):
         """Set focus on the command entry when the window is mapped"""
         self.command_entry.grab_focus()
+        
+        # Update the entry padding when the window is first shown
+        # Use a longer timeout for the initial update to ensure widgets are fully allocated
+        GLib.timeout_add(300, self.update_entry_padding)
     
     def load_command_history(self):
         """Load command history from file"""
@@ -541,9 +548,6 @@ class LmTermWindow(Adw.ApplicationWindow):
         self.command_rows.append(command_row)
         print(f"Added new command row to command_rows list. Total rows: {len(self.command_rows)}")
         
-        # Scroll to the bottom of the view
-        self._scroll_to_bottom()
-        
         # Process based on mode
         is_ai_mode = self.mode_switch.get_active()
         is_agent_mode = not self.human_switch.get_active()
@@ -558,6 +562,9 @@ class LmTermWindow(Adw.ApplicationWindow):
             command_row.set_command(text)
             threading.Thread(target=self._execute_command, 
                             args=(command_row, text)).start()
+        
+        # Ensure scrolling happens after the UI has updated with the new content
+        GLib.idle_add(self._scroll_to_bottom)
     
     def _process_ai_prompt(self, command_row, prompt, is_agent_mode):
         """Process an AI prompt using LM Studio"""
@@ -650,7 +657,8 @@ class LmTermWindow(Adw.ApplicationWindow):
     def _execute_command(self, command_row, command):
         """Execute a terminal command"""
         try:
-            result = execute_command(command)
+            # When in direct command mode, we should bypass confirmation
+            result = execute_command(command, require_confirmation=False)
             GLib.idle_add(command_row.set_command_output, result)
             
             # Update the prompt if the command was a cd command
@@ -705,9 +713,70 @@ class LmTermWindow(Adw.ApplicationWindow):
             # Get the adjustment and scroll to the bottom
             vadj = scrolled.get_vadjustment()
             if vadj:
-                GLib.idle_add(lambda: vadj.set_value(vadj.get_upper() - vadj.get_page_size())) 
+                # Schedule the scroll to happen after the UI has updated
+                def do_scroll():
+                    # Make sure we get the latest values
+                    vadj = scrolled.get_vadjustment()
+                    if vadj:
+                        new_value = vadj.get_upper() - vadj.get_page_size()
+                        vadj.set_value(new_value)
+                    return False  # Don't call again
+                    
+                GLib.idle_add(do_scroll)
 
     def update_prompt(self):
         """Update the shell prompt with the current directory"""
         current_dir = os.path.basename(os.getcwd())
-        self.prompt_label.set_text(f"{os.getenv('USER')}@{os.getenv('HOSTNAME', 'localhost')}:{current_dir}$") 
+        
+        # Use markup with colored spans
+        user_host = f"<span foreground='#4CAF50'>{os.getenv('USER')}@{os.getenv('HOSTNAME', 'localhost')}</span>"
+        separator = "<span foreground='black'>:</span>"
+        directory = f"<span foreground='#2196F3'>{current_dir}</span>"
+        prompt_char = "<span foreground='black'>$</span>"
+        
+        # Set the markup text
+        self.prompt_label.set_markup(f"{user_host}{separator}{directory}{prompt_char}")
+        self.prompt_label.set_use_markup(True)
+        
+        # We need to wait for the label to be allocated its new size
+        # Connect a one-time handler to the prompt label's notify::width signal
+        def on_prompt_width_changed(label, pspec):
+            # Disconnect this handler after it's called once
+            label.disconnect(handler_id)
+            # Update the padding
+            self.update_entry_padding()
+            return False
+        
+        handler_id = self.prompt_label.connect("notify::width", on_prompt_width_changed)
+        
+        # Also schedule an update after a short delay as a fallback
+        GLib.timeout_add(100, self.update_entry_padding)
+
+    def update_entry_padding(self):
+        """Update the command entry padding to match the prompt width"""
+        # Get the width of the prompt frame
+        prompt_width = self.prompt_frame.get_allocated_width()
+        
+        if prompt_width > 0:
+            # Add a small buffer (e.g., 5px) to ensure text doesn't overlap with prompt
+            padding = prompt_width + 5
+            
+            # Set the left margin of the entry to match the prompt width
+            css_provider = Gtk.CssProvider()
+            css = f"""
+            .command-input {{
+                padding-left: {padding}px;
+            }}
+            """
+            css_provider.load_from_data(css.encode())
+            
+            # Apply the CSS to the entry
+            style_context = self.command_entry.get_style_context()
+            style_context.add_provider(css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            
+            print(f"Updated command entry padding to {padding}px")
+            return False  # Don't call again
+        else:
+            # If we couldn't get the width yet, try again later
+            print("Prompt width not available yet, will try again")
+            return True  # Call again 
