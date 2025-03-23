@@ -670,32 +670,18 @@ class LmTermWindow(Adw.ApplicationWindow):
     
     def _execute_command(self, command_row, command):
         """Execute a command and add it to the terminal output"""
-        # Create a new command row
-        command_row = CommandRow()
-        command_row.set_command(command)
-        
-        # Add the command row to the list
-        self.command_rows.append(command_row)
-        self.command_container.append(command_row)
-        print(f"Added new command row to command_rows list. Total rows: {len(self.command_rows)}")
-        
-        # Execute the command in a separate thread
-        def run_command():
-            try:
-                # Use stream_command instead of execute_command
-                result = stream_command(command, parent_widget=self, command_row=command_row)
-                
-                # Update the prompt if the command was a cd command
-                if command.strip().startswith("cd "):
-                    GLib.idle_add(self.update_prompt)
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                GLib.idle_add(command_row.set_command_output, f"Error: {str(e)}")
-        
-        # Start the thread
-        threading.Thread(target=run_command).start()
-
+        try:
+            # Use stream_command instead of execute_command
+            result = stream_command(command, parent_widget=self, command_row=command_row)
+            
+            # Update the prompt if the command was a cd command
+            if command.strip().startswith("cd "):
+                GLib.idle_add(self.update_prompt)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            GLib.idle_add(command_row.set_command_output, f"Error: {str(e)}")
+    
     def on_new_conversation(self, button):
         """Handle new conversation button click"""
         # Clear all command rows from the container

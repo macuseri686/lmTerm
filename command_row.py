@@ -486,9 +486,21 @@ class CommandRow(Adw.ExpanderRow):
                 # Send the tool result back to the AI
                 tool_id = self.pending_command_id
                 print(f"DEBUG - Sending tool result for ID: {tool_id}")
+                
+                # Check if we're already streaming a response
+                if hasattr(self, '_streaming_response_active') and self._streaming_response_active:
+                    print("DEBUG - Already streaming a response, not sending tool result again")
+                    return
+                    
+                # Mark that we're starting to stream a response
+                self._streaming_response_active = True
+                
+                # Send the tool result back to the AI
                 success = lm_manager.send_tool_result(tool_id, previous_result)
                 if not success:
                     print("Failed to send tool result to AI")
+                    # Reset streaming flag if failed
+                    self._streaming_response_active = False
             else:
                 print("Could not access LM Studio manager from window")
             
@@ -1041,3 +1053,7 @@ class CommandRow(Adw.ExpanderRow):
         self._streaming_content = ""
         if hasattr(self, '_thinking_expander_added'):
             self._thinking_expander_added = False
+        
+        # Reset the streaming response active flag
+        if hasattr(self, '_streaming_response_active'):
+            self._streaming_response_active = False
