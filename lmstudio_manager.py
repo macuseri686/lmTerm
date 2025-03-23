@@ -273,6 +273,7 @@ Always err on the side of caution. For instance, instead of running "mv /etc/apt
 
 DO NOT run interactive commands like "vim" or "nano".
 ONLY run commands that will output to the terminal and return a response, like "ls", "cat", "git status", etc. 
+"sudo" is ok to run, since we handle that in the UI.
 
 Always run only one command at a time, and wait for the tool result to come back before running the next command.
 """

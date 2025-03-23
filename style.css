@@ -16,6 +16,10 @@
 
 .ai-bubble .header {
     padding: 0;
+    min-height: 0px;
+}
+
+.ai-bubble .header.activatable {
     border-bottom: 1px solid rgba(100, 100, 100, 0.1);
 }
 
