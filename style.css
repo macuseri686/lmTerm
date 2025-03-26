@@ -1,5 +1,12 @@
+window {
+    background-color: rgba(0, 0, 0, 0);
+}
+scrolledwindow {
+    background-color: rgb(250,250,250);
+}
 .user-bubble {
-    background-color: #e3f2fd; /* Light blue for user bubbles */
+    background-color: #e3f2fd;
+    /* Light blue for user bubbles */
     border-radius: 12px 12px 12px 0;
     margin-top: 8px;
     margin-bottom: 8px;
@@ -7,7 +14,8 @@
 }
 
 .ai-bubble {
-    background-color: #f1f8e9; /* Light green for AI bubbles */
+    background-color: #f1f8e9;
+    /* Light green for AI bubbles */
     border-radius: 12px 12px 0 12px;
     margin-top: 8px;
     margin-bottom: 8px;
@@ -43,9 +51,9 @@
 
 .terminal-output label {
     color: #abb2bf;
-} 
+}
 
-.terminal-output > scrolledwindow.terminal-scrolled {
+.terminal-output>scrolledwindow.terminal-scrolled {
     background-color: #282c34;
 }
 
@@ -54,7 +62,14 @@
 }
 
 .toolbar.vertical {
-    background-color: rgba(250,250,250,0.8);
+    background-color: rgba(242, 242, 242, .8);
+    border-bottom-left-radius: 15px;
+    border-bottom-right-radius: 15px;
+    /* add a box shadow to the top edge, and white edge thickness of 1px */
+    box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.5),
+                inset 1px 0 0 rgba(255, 255, 255, 0.3),
+                inset -1px 0 0 rgba(255, 255, 255, 0.3),
+                inset 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .shell-prompt {
@@ -70,6 +85,7 @@
     min-width: 80px;
     z-index: 1;
 }
+
 .command-input {
     /* padding-left: 225px; */
 }
