@@ -106,14 +106,46 @@ class LmTermWindow(Adw.ApplicationWindow):
         headerbar.pack_end(menu_button)
         self.main_box.append(headerbar)
         
-        # Main content area with scrolling
+        # --- Content Area Setup ---
+        # Create a Stack to switch between welcome screen and command history
+        self.content_stack = Gtk.Stack()
+        self.content_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.content_stack.set_vexpand(True)
+        self.main_box.append(self.content_stack)
+        self.content_stack.add_css_class("content_stack")
+
+        # 1. Welcome Screen
+        welcome_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        welcome_box.set_halign(Gtk.Align.CENTER)
+        welcome_box.set_valign(Gtk.Align.CENTER)
+        welcome_box.set_hexpand(True)
+        welcome_box.set_vexpand(True)
+
+        welcome_icon = Gtk.Image.new_from_file("lmTerm.png") # Load the icon
+        welcome_icon.set_opacity(0.1) # Set opacity to 70%
+        welcome_icon.set_pixel_size(256) # Optional: Set a size for the icon
+        welcome_icon.add_css_class("welcome-icon")
+
+        welcome_box.append(welcome_icon)
+        # You could add a label here too if desired
+        # welcome_label = Gtk.Label(label="Enter a command or AI prompt below")
+        # welcome_box.append(welcome_label)
+
+        self.content_stack.add_named(welcome_box, "welcome")
+
+        # 2. Command History Area
         scrolled = Gtk.ScrolledWindow()
-        scrolled.set_vexpand(True)
-        self.main_box.append(scrolled)
-        
+        # scrolled.set_vexpand(True) # Vexpand is now on the stack
+
         # Command history container (vertical box for accordion items)
         self.command_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         scrolled.set_child(self.command_container)
+
+        self.content_stack.add_named(scrolled, "history")
+
+        # Start by showing the welcome screen
+        self.content_stack.set_visible_child_name("welcome")
+        # --- End Content Area Setup ---
         
         # Input area at the bottom
         input_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -533,6 +565,10 @@ class LmTermWindow(Adw.ApplicationWindow):
         if not text:
             return
             
+        # Switch to history view if it's the first command
+        if not self.command_rows:
+             self.content_stack.set_visible_child_name("history")
+
         # Add to history
         self.add_to_history(text)
         self.history_index = -1
@@ -694,6 +730,9 @@ class LmTermWindow(Adw.ApplicationWindow):
         # Clear the command_rows list
         self.command_rows = []
         
+        # Switch back to the welcome screen
+        self.content_stack.set_visible_child_name("welcome")
+        
         # Reset the command entry
         self.command_entry.set_text("")
         
@@ -717,13 +756,18 @@ class LmTermWindow(Adw.ApplicationWindow):
 
     def _scroll_to_bottom(self):
         """Scroll to the bottom of the conversation view"""
-        # Find the ScrolledWindow
+        # Find the ScrolledWindow within the stack's visible child
+        visible_child = self.content_stack.get_visible_child()
         scrolled = None
-        for child in self.main_box.observe_children():
-            if isinstance(child, Gtk.ScrolledWindow):
-                scrolled = child
-                break
-        
+        if isinstance(visible_child, Gtk.ScrolledWindow):
+             scrolled = visible_child
+        # If the visible child is the welcome screen, we don't need to scroll
+        elif self.content_stack.get_visible_child_name() == "history":
+             # It might take a moment for the stack to switch, find it by name
+             child = self.content_stack.get_child_by_name("history")
+             if isinstance(child, Gtk.ScrolledWindow):
+                 scrolled = child
+
         if scrolled:
             # Get the adjustment and scroll to the bottom
             vadj = scrolled.get_vadjustment()

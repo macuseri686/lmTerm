@@ -4,6 +4,13 @@ window {
 scrolledwindow {
     background-color: rgb(250,250,250);
 }
+.content_stack {
+    background-color: rgb(250,250,250);
+}
+.content_stack .welcome-icon {
+    /* reduce contrast of icon */
+    filter: brightness(0.7);
+}
 .user-bubble {
     background-color: #e3f2fd;
     /* Light blue for user bubbles */
