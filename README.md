@@ -18,28 +18,98 @@ lmTerm is a GTK-based terminal application that integrates with LM Studio to pro
 
 - Python 3.8+
 - GTK 4.0
-- Adwaita (Adw) 1
+- Adwaita (Adw) 1.4 or higher
 - LM Studio running locally
+- PyGObject 3.42 or higher
+- libadwaita 1.4 or higher
 
 ## Installation
 
-1. Clone the repository:
-   ```git clone https://github.com/macuseri686/lmTerm.git```
-   ```cd lmTerm```
+### Linux Operating Systems
 
-2. Install dependencies:
-   ```pip install -r requirements.txt```
+1. Install system dependencies:
+   ```bash
+   # For Ubuntu/Debian:
+   sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1
+   
+   # For Fedora:
+   sudo dnf install python3-gobject python3-gobject-gtk4 libadwaita
+   ```
 
-3. Make sure LM Studio is running with the API server enabled (typically on port 1234)
+2. Clone the repository:
+   ```bash
+   git clone https://github.com/macuseri686/lmTerm.git
+   cd lmTerm
+   ```
 
-4. Run the application:
-   ```python lmterm.py```
+3. Create and activate a virtual environment:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+
+4. Install Python dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+5. Make sure LM Studio is running with the API server enabled (typically on port 1234)
+
+6. Run the application:
+   ```bash
+   python lmterm.py
+   ```
+
+### macOS
+
+1. Install Homebrew if you haven't already:
+   ```bash
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+   ```
+
+2. Install GTK4, libadwaita, and their dependencies:
+   ```bash
+   brew install gtk4
+   brew install libadwaita
+   brew install pygobject3
+   ```
+
+3. Install Python if you haven't already:
+   ```bash
+   brew install python@3.11
+   ```
+
+4. Clone the repository:
+   ```bash
+   git clone https://github.com/macuseri686/lmTerm.git
+   cd lmTerm
+   ```
+
+5. Create and activate a virtual environment:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+
+6. Install Python dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+7. Download and install [LM Studio](https://lmstudio.ai) for macOS
+
+8. Start LM Studio and enable the API server (typically on port 1234)
+
+9. Run the application:
+   ```bash
+   python lmterm.py
+   ```
 
 ## Configuration
 
 lmTerm looks for a `config.json` file in the application directory with the following structure:
 
-```
+```json
 {
   "lmstudio_api_url": "http://localhost:1234/v1"
 }
@@ -79,6 +149,34 @@ The project structure:
 - `command_row.py`: UI component for command interactions
 - `lmstudio_manager.py`: Interface to LM Studio API
 - `terminal.py`: Terminal command execution utilities
+
+## Troubleshooting
+
+### Linux
+
+1. If you get GTK-related errors:
+   - Make sure you've installed all system dependencies
+   - For Ubuntu/Debian: `sudo apt install --reinstall python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1`
+   - For Fedora: `sudo dnf reinstall python3-gobject python3-gobject-gtk4 libadwaita`
+
+2. If PyGObject is not found:
+   - Try reinstalling it: `pip uninstall PyGObject && pip install PyGObject`
+   - Make sure you're using the system Python for GTK bindings
+
+### macOS
+
+1. If you get GTK-related errors:
+   - Make sure you've installed GTK4 and libadwaita via Homebrew
+   - Try running: `brew reinstall gtk4 libadwaita pygobject3`
+   - Ensure your virtual environment is using the correct Python version
+
+2. If PyGObject is not found:
+   - Try reinstalling it: `pip uninstall PyGObject && pip install PyGObject`
+   - If that doesn't work, install via Homebrew: `brew install pygobject3`
+
+3. If the application crashes on startup:
+   - Check that LM Studio is running and the API server is enabled
+   - Verify the port number in `config.json` matches your LM Studio settings
 
 ## License
 

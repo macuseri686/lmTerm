@@ -1,0 +1,5 @@
+PyGObject>=3.42.0
+requests>=2.31.0
+markdown>=3.5.1
+lmstudio>=0.1.0
+libadwaita>=1.4.0 
