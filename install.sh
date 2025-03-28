@@ -55,7 +55,8 @@ if [ -z "\$PYTHON_EXEC" ]; then
     echo "Error: Python 3 interpreter not found." >&2
     exit 1
 fi
-exec "\$PYTHON_EXEC" "$INSTALL_DIR/lmterm.py" "\$@"
+cd "$INSTALL_DIR"
+exec "\$PYTHON_EXEC" lmterm.py "\$@"
 EOF
 
 # Make the wrapper executable
