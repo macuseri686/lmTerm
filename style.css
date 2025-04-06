@@ -1,5 +1,5 @@
-window {
-    background-color: rgba(0, 0, 0, 0);
+window, window.background.csd, .background, .csd {
+    background: alpha(@window_bg_color, 0.8);
 }
 scrolledwindow {
     background-color: rgb(250,250,250);
@@ -69,7 +69,8 @@ scrolledwindow {
 }
 
 .toolbar.vertical {
-    background-color: rgba(242, 242, 242, .8);
+    /* background-color: rgba(242, 242, 242, .8); */
+    background-color: alpha(@window_bg_color, 0);
     border-bottom-left-radius: 15px;
     border-bottom-right-radius: 15px;
     /* white edge thickness of 1px */
